@@ -62,6 +62,8 @@ class UserResponse(BaseModel):
 def create_token(user: Dict[str, Optional[str]]) -> str:
     payload = {
         "sub": user["id"],
+        "email": user["email"],
+        "name": user["name"], 
         "role": user["role"],
         "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
     }

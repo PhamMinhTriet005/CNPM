@@ -272,23 +272,27 @@ async def create_booking(body: BookingCreate, request: Request):
     """POST /tutors/bookings - Student creates a booking"""
     payload = require_student(request)
     student_id = payload.get("sub")
-    print(f"[tutors] POST /bookings for student_id={student_id}, session={body.sessionId}")
+    
+    # Get student info from JWT token (set during login)
+    student_name = payload.get("name")
+    student_email = payload.get("email")
+    print(student_name, student_email)
+    print(f"[tutors] POST /bookings for student_id={student_id}, name={student_name}, session={body.sessionId}")
     
     # Check if already booked
     existing = next(
         (b for b in BOOKINGS.values() 
          if b["studentId"] == student_id 
          and b["sessionId"] == body.sessionId 
-         and b["status"] not in ["cancelled"]),
+         and b["status"] not in ["cancelled", "rejected"]),
         None
     )
     if existing:
         raise HTTPException(status_code=400, detail="already booked this session")
     
-    # Call Sessions service to check capacity and enroll
+    # Call Sessions service to check capacity
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            # Check session exists and has capacity
             session_resp = await client.get(
                 f"{SESSIONS_UPSTREAM}/internal/{body.sessionId}"
             )
@@ -298,35 +302,28 @@ async def create_booking(body: BookingCreate, request: Request):
             session_data = session_resp.json().get("session", {})
             if session_data.get("enrolled", 0) >= session_data.get("capacity", 0):
                 raise HTTPException(status_code=400, detail="session is full")
-            
-            # Enroll the student
-            enroll_resp = await client.post(
-                f"{SESSIONS_UPSTREAM}/internal/enroll/{body.sessionId}"
-            )
-            if not enroll_resp.is_success:
-                raise HTTPException(status_code=400, detail="failed to enroll")
                 
     except httpx.RequestError as e:
         print(f"[tutors] Sessions service error: {e}")
-        raise HTTPException(status_code=503, detail="sessions service unavailable")
+        # Continue anyway for demo purposes
     
-    # Create booking
+    # Create booking with PENDING status
     booking_id = f"book-{len(BOOKINGS) + 1:03d}-{datetime.utcnow().timestamp():.0f}"
     
     new_booking = {
         "id": booking_id,
         "sessionId": body.sessionId,
         "studentId": student_id,
-        "studentName": payload.get("name", "Student"),
-        "studentEmail": payload.get("email", f"{student_id}@hcmut.edu.vn"),
+        "studentName": student_name,  # From JWT
+        "studentEmail": student_email,  # From JWT
         "slotId": body.slotId,
-        "status": "pending",
+        "status": "pending",  # Initial status is PENDING
         "message": body.message or "",
         "createdAt": datetime.utcnow().isoformat() + "Z",
     }
     
     BOOKINGS[booking_id] = new_booking
-    print(f"[tutors] Created booking {booking_id}")
+    print(f"[tutors] Created booking {booking_id} with status=pending")
     
     return {"ok": True, "booking": new_booking}
 
@@ -419,7 +416,11 @@ async def get_tutor_bookings(request: Request):
 
 @app.post("/tutor/bookings/{booking_id}/confirm")
 async def confirm_booking(booking_id: str, request: Request):
-    """POST /tutors/tutor/bookings/{id}/confirm - Tutor confirms booking"""
+    """POST /tutors/tutor/bookings/{id}/confirm - Tutor confirms booking
+    
+    Status flow: pending → confirmed
+    When confirmed, the session is added to student's registered sessions
+    """
     payload = require_tutor(request)
     tutor_id = payload.get("sub")
     print(f"[tutors] POST /tutor/bookings/{booking_id}/confirm for tutor_id={tutor_id}")
@@ -429,35 +430,49 @@ async def confirm_booking(booking_id: str, request: Request):
         raise HTTPException(status_code=404, detail="booking not found")
     
     if booking["status"] != "pending":
-        raise HTTPException(status_code=400, detail="booking is not pending")
+        raise HTTPException(status_code=400, detail=f"booking is {booking['status']}, not pending")
     
-    # Call Sessions service to mark the slot as booked
-    slot_id = booking.get("slotId")
-    if slot_id:
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.put(
+    # Update booking status to CONFIRMED
+    booking["status"] = "confirmed"
+    booking["confirmedAt"] = datetime.utcnow().isoformat() + "Z"
+    booking["confirmedBy"] = tutor_id
+    
+    # Call Sessions service to:
+    # 1. Increment enrolled count
+    # 2. Mark slot as booked (if applicable)
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Enroll student in session
+            enroll_resp = await client.post(
+                f"{SESSIONS_UPSTREAM}/internal/enroll/{booking['sessionId']}"
+            )
+            if enroll_resp.is_success:
+                print(f"[tutors] Enrolled student in session {booking['sessionId']}")
+            
+            # Mark specific slot as booked if slotId provided
+            slot_id = booking.get("slotId")
+            if slot_id:
+                await client.put(
                     f"{SESSIONS_UPSTREAM}/internal/slots/{slot_id}/book",
                     json={
                         "tutorId": tutor_id,
                         "studentId": booking["studentId"],
                     }
                 )
-                if not resp.is_success:
-                    print(f"[tutors] Failed to book slot: {resp.text}")
-        except httpx.RequestError as e:
-            print(f"[tutors] Sessions service error: {e}")
+    except httpx.RequestError as e:
+        print(f"[tutors] Sessions service error: {e}")
     
-    booking["status"] = "confirmed"
-    booking["confirmedAt"] = datetime.utcnow().isoformat() + "Z"
-    booking["confirmedBy"] = tutor_id
+    print(f"[tutors] Booking {booking_id} confirmed - student can now see it in Course Registration")
     
     return {"ok": True, "booking": booking}
 
 
 @app.post("/tutor/bookings/{booking_id}/reject")
 async def reject_booking(booking_id: str, request: Request):
-    """POST /tutors/tutor/bookings/{id}/reject - Tutor rejects booking"""
+    """POST /tutors/tutor/bookings/{id}/reject - Tutor rejects booking
+    
+    Status flow: pending → rejected
+    """
     payload = require_tutor(request)
     tutor_id = payload.get("sub")
     print(f"[tutors] POST /tutor/bookings/{booking_id}/reject for tutor_id={tutor_id}")
@@ -467,23 +482,14 @@ async def reject_booking(booking_id: str, request: Request):
         raise HTTPException(status_code=404, detail="booking not found")
     
     if booking["status"] != "pending":
-        raise HTTPException(status_code=400, detail="booking is not pending")
+        raise HTTPException(status_code=400, detail=f"booking is {booking['status']}, not pending")
     
-    # If slot was tentatively reserved, release it
-    slot_id = booking.get("slotId")
-    if slot_id:
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                await client.put(
-                    f"{SESSIONS_UPSTREAM}/internal/slots/{slot_id}/unbook",
-                    json={"tutorId": tutor_id}
-                )
-        except httpx.RequestError as e:
-            print(f"[tutors] Sessions service error: {e}")
-    
-    booking["status"] = "cancelled"
-    booking["cancelledAt"] = datetime.utcnow().isoformat() + "Z"
+    # Update status to REJECTED (not cancelled - that's for student cancellation)
+    booking["status"] = "rejected"
+    booking["rejectedAt"] = datetime.utcnow().isoformat() + "Z"
     booking["rejectedBy"] = tutor_id
+    
+    print(f"[tutors] Booking {booking_id} rejected")
     
     return {"ok": True, "booking": booking}
 

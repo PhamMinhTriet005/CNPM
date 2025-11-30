@@ -23,6 +23,85 @@ let availabilityData = { slots: [], exceptions: [], policy: {}, weekUsage: 0 };
 let editingSlotId = null;
 let bookingRequests = [];
 
+// ==================== AUTO-POLLING FOR BOOKING REQUESTS ====================
+let bookingPollInterval = null;
+const BOOKING_POLL_INTERVAL_MS = 5000; // 5 seconds
+
+function startBookingPolling() {
+  if (bookingPollInterval) {
+    clearInterval(bookingPollInterval);
+  }
+  console.log("[tutor] Starting booking request polling every", BOOKING_POLL_INTERVAL_MS / 1000, "seconds");
+  
+  bookingPollInterval = setInterval(async () => {
+    console.log("[tutor] Polling for new booking requests...");
+    const oldCount = bookingRequests.filter(b => b.status === "pending").length;
+    
+    await fetchBookingRequests();
+    
+    const newCount = bookingRequests.filter(b => b.status === "pending").length;
+    
+    // Show notification if new pending requests
+    if (newCount > oldCount) {
+      const diff = newCount - oldCount;
+      showAlert(`🔔 ${diff} new booking request(s)!`, "success");
+      
+      // Update tab badge
+      updateRequestsTabBadge(newCount);
+    }
+  }, BOOKING_POLL_INTERVAL_MS);
+}
+
+function stopBookingPolling() {
+  if (bookingPollInterval) {
+    clearInterval(bookingPollInterval);
+    bookingPollInterval = null;
+    console.log("[tutor] Stopped booking polling");
+  }
+}
+
+function updateRequestsTabBadge(pendingCount) {
+  const requestsTab = document.querySelector('.tab[data-tab="requests"]');
+  if (requestsTab) {
+    // Remove existing badge
+    const existingBadge = requestsTab.querySelector(".pending-badge");
+    if (existingBadge) existingBadge.remove();
+    
+    // Add new badge if there are pending requests
+    if (pendingCount > 0) {
+      const badge = document.createElement("span");
+      badge.className = "pending-badge";
+      badge.style.cssText = `
+        background: #ef4444;
+        color: white;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 700;
+        margin-left: 8px;
+        animation: pulse 2s infinite;
+      `;
+      badge.textContent = pendingCount;
+      requestsTab.appendChild(badge);
+    }
+  }
+}
+
+// Stop polling when leaving page
+window.addEventListener("beforeunload", () => {
+  stopBookingPolling();
+});
+
+// Visibility API - pause when tab hidden
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    stopBookingPolling();
+  } else {
+    fetchBookingRequests();
+    startBookingPolling();
+  }
+});
+
 // DOM Elements
 const els = {
   logout: document.querySelector("#logoutBtn"),
@@ -601,42 +680,74 @@ function renderBookingRequests() {
     container.innerHTML = `
       <tr>
         <td colspan="7" style="text-align: center; padding: 40px; color: #64748b;">
-          No booking requests yet.
+          <div style="font-size: 48px; margin-bottom: 16px;">📭</div>
+          <div>No booking requests yet.</div>
+          <div style="font-size: 13px; margin-top: 8px;">When students book your sessions, they'll appear here.</div>
         </td>
       </tr>
     `;
     return;
   }
 
-  container.innerHTML = bookingRequests
-    .map((b) => {
-      const statusClass = {
-        pending: "warning",
-        confirmed: "success",
-        cancelled: "error",
-        completed: "info",
-      }[b.status] || "";
+  // Sort: pending first, then by date
+  const sorted = [...bookingRequests].sort((a, b) => {
+    if (a.status === "pending" && b.status !== "pending") return -1;
+    if (a.status !== "pending" && b.status === "pending") return 1;
+    return new Date(b.createdAt) - new Date(a.createdAt);
+  });
 
-      const actions =
-        b.status === "pending"
-          ? `
-            <button class="btn small success" onclick="confirmBooking('${b.id}')">✓ Confirm</button>
-            <button class="btn small danger" onclick="rejectBooking('${b.id}')">✗ Reject</button>
-          `
-          : b.status === "confirmed"
-          ? `
-            <button class="btn small primary" onclick="completeBooking('${b.id}')">Complete</button>
-          `
-          : "-";
+  container.innerHTML = sorted
+    .map((b) => {
+      // Status badge styling
+      const statusConfig = {
+        pending: { class: "warning", icon: "⏳", label: "Pending" },
+        confirmed: { class: "success", icon: "✅", label: "Confirmed" },
+        rejected: { class: "error", icon: "❌", label: "Rejected" },
+        cancelled: { class: "error", icon: "🚫", label: "Cancelled" },
+        completed: { class: "info", icon: "🎓", label: "Completed" },
+      };
+      
+      const status = statusConfig[b.status] || { class: "", icon: "❓", label: b.status };
+
+      // Action buttons based on status
+      let actions = '';
+      if (b.status === "pending") {
+        actions = `
+          <button class="btn small success" onclick="confirmBooking('${b.id}')">✓ Confirm</button>
+          <button class="btn small danger" onclick="rejectBooking('${b.id}')">✗ Reject</button>
+        `;
+      } else if (b.status === "confirmed") {
+        actions = `
+          <button class="btn small primary" onclick="completeBooking('${b.id}')">🎓 Complete</button>
+        `;
+      } else {
+        actions = `<span class="muted">-</span>`;
+      }
+
+      // Check if this is a new request (less than 1 minute old)
+      const isNew = b.status === "pending" && 
+                    (Date.now() - new Date(b.createdAt).getTime()) < 60000;
 
       return `
-        <tr>
-          <td>${b.studentName}</td>
-          <td>${b.studentEmail}</td>
-          <td>${b.sessionId}</td>
-          <td>${b.message || "-"}</td>
-          <td>${new Date(b.createdAt).toLocaleDateString()}</td>
-          <td><span class="badge ${statusClass}">${b.status}</span></td>
+        <tr class="${isNew ? 'booking-new' : ''}">
+          <td>
+            <div style="font-weight: 600;">${b.studentName || 'Unknown'}</div>
+          </td>
+          <td style="font-size: 13px; color: #64748b;">${b.studentEmail || '-'}</td>
+          <td>
+            <code style="background: #f1f5f9; padding: 4px 8px; border-radius: 4px; font-size: 12px;">
+              ${b.sessionId}
+            </code>
+          </td>
+          <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${b.message || ''}">
+            ${b.message || '<span class="muted">No message</span>'}
+          </td>
+          <td style="font-size: 13px;">${new Date(b.createdAt).toLocaleDateString()}</td>
+          <td>
+            <span class="badge ${status.class}">
+              ${status.icon} ${status.label}
+            </span>
+          </td>
           <td class="action-buttons">${actions}</td>
         </tr>
       `;
@@ -830,6 +941,19 @@ function attachEvents() {
   }
 
   attachEvents();
-  await fetchAvailability();
-  await fetchBookingRequests();
+  
+  // Fetch initial data
+  await Promise.all([
+    fetchAvailability(),
+    fetchBookingRequests(),
+  ]);
+  
+  // Update badge on load
+  const pendingCount = bookingRequests.filter(b => b.status === "pending").length;
+  updateRequestsTabBadge(pendingCount);
+  
+  // Start auto-polling for new booking requests
+  startBookingPolling();
+  
+  console.log("Tutor management page initialized with auto-polling");
 })();
