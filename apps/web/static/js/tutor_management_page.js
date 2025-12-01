@@ -25,30 +25,16 @@ let bookingRequests = [];
 
 // ==================== AUTO-POLLING FOR BOOKING REQUESTS ====================
 let bookingPollInterval = null;
-const BOOKING_POLL_INTERVAL_MS = 5000; // 5 seconds
+const BOOKING_POLL_INTERVAL_MS = 2000; // 2 seconds for fast updates
 
 function startBookingPolling() {
   if (bookingPollInterval) {
     clearInterval(bookingPollInterval);
   }
-  console.log("[tutor] Starting booking request polling every", BOOKING_POLL_INTERVAL_MS / 1000, "seconds");
+  console.log("[tutor] Starting booking polling every", BOOKING_POLL_INTERVAL_MS / 1000, "seconds");
   
-  bookingPollInterval = setInterval(async () => {
-    console.log("[tutor] Polling for new booking requests...");
-    const oldCount = bookingRequests.filter(b => b.status === "pending").length;
-    
-    await fetchBookingRequests();
-    
-    const newCount = bookingRequests.filter(b => b.status === "pending").length;
-    
-    // Show notification if new pending requests
-    if (newCount > oldCount) {
-      const diff = newCount - oldCount;
-      showAlert(`🔔 ${diff} new booking request(s)!`, "success");
-      
-      // Update tab badge
-      updateRequestsTabBadge(newCount);
-    }
+  bookingPollInterval = setInterval(() => {
+    fetchBookingRequests(true); // silent fetch
   }, BOOKING_POLL_INTERVAL_MS);
 }
 
@@ -56,48 +42,44 @@ function stopBookingPolling() {
   if (bookingPollInterval) {
     clearInterval(bookingPollInterval);
     bookingPollInterval = null;
-    console.log("[tutor] Stopped booking polling");
   }
 }
 
 function updateRequestsTabBadge(pendingCount) {
   const requestsTab = document.querySelector('.tab[data-tab="requests"]');
-  if (requestsTab) {
-    // Remove existing badge
-    const existingBadge = requestsTab.querySelector(".pending-badge");
-    if (existingBadge) existingBadge.remove();
-    
-    // Add new badge if there are pending requests
-    if (pendingCount > 0) {
-      const badge = document.createElement("span");
-      badge.className = "pending-badge";
-      badge.style.cssText = `
-        background: #ef4444;
-        color: white;
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 11px;
-        font-weight: 700;
-        margin-left: 8px;
-        animation: pulse 2s infinite;
-      `;
-      badge.textContent = pendingCount;
-      requestsTab.appendChild(badge);
-    }
+  if (!requestsTab) return;
+  
+  // Remove existing badge
+  const existingBadge = requestsTab.querySelector(".pending-badge");
+  if (existingBadge) existingBadge.remove();
+  
+  // Add new badge if there are pending requests
+  if (pendingCount > 0) {
+    const badge = document.createElement("span");
+    badge.className = "pending-badge";
+    badge.style.cssText = `
+      background: #ef4444;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 700;
+      margin-left: 8px;
+    `;
+    badge.textContent = pendingCount;
+    requestsTab.appendChild(badge);
   }
 }
 
 // Stop polling when leaving page
-window.addEventListener("beforeunload", () => {
-  stopBookingPolling();
-});
+window.addEventListener("beforeunload", stopBookingPolling);
 
-// Visibility API - pause when tab hidden
+// Visibility API - pause when tab hidden, resume when visible
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     stopBookingPolling();
   } else {
-    fetchBookingRequests();
+    fetchBookingRequests(); // Immediate fetch when tab visible
     startBookingPolling();
   }
 });
@@ -423,7 +405,7 @@ window.deleteException = async function(excId) {
 
 // ==================== BOOKING REQUESTS (from Tutors service) ====================
 
-async function fetchBookingRequests() {
+async function fetchBookingRequests(silent = false) {
   try {
     const res = await fetch(api("/tutors/tutor/bookings"), { credentials: "include" });
 
@@ -432,15 +414,22 @@ async function fetchBookingRequests() {
     }
 
     if (!res.ok) {
-      console.error("Failed to load booking requests");
+      if (!silent) console.error("Failed to load booking requests:", res.status);
       return;
     }
 
     const data = await res.json();
     bookingRequests = data.bookings || [];
+    
+    // Update badge
+    const pendingCount = bookingRequests.filter(b => b.status === "pending").length;
+    updateRequestsTabBadge(pendingCount);
+    
+    // Always re-render the table
     renderBookingRequests();
+    
   } catch (err) {
-    console.error("Fetch booking requests error:", err);
+    if (!silent) console.error("Fetch booking requests error:", err);
   }
 }
 

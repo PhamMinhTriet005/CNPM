@@ -131,11 +131,11 @@ SESSIONS: Dict[str, Dict[str, Any]] = {
         "courseCode": "CO2013",
         "courseTitle": "Operating Systems",
         "capacity": 3,
-        "enrolled": 1,
+        "enrolled": 0,
         "status": "active",
         "createdAt": iso(-20, 14),
         "slots": [
-            {"id": "slot-002", "day": "Tuesday", "startTime": "09:00", "endTime": "11:00", "mode": "online", "location": None},
+            {"id": "slot-002", "day": "Wednesday", "startTime": "14:00", "endTime": "16:00", "mode": "online", "location": None},
         ],
     },
 }
@@ -656,6 +656,227 @@ async def internal_unbook_slot(slot_id: str, request: Request):
     print(f"[sessions] INTERNAL unbook slot {slot_id}")
     
     return {"ok": True, "slot": slot}
+
+
+# ==================== TUTOR SESSION MANAGEMENT ENDPOINTS ====================
+
+@app.get("/tutor/sessions")
+async def get_tutor_sessions(request: Request):
+    """GET /sessions/tutor/sessions - Get all sessions for the logged-in tutor"""
+    payload = require_tutor(request)
+    tutor_id = payload.get("sub")
+    print(f"[sessions] GET /tutor/sessions for tutor_id={tutor_id}")
+    
+    tutor_sessions = []
+    now = datetime.utcnow()
+    
+    for session_id, session in SESSIONS.items():
+        if session.get("tutorId") == tutor_id:
+            # Determine session status based on time
+            slot = session.get("slots", [{}])[0] if session.get("slots") else {}
+            start_time = slot.get("startTime", "09:00")
+            end_time = slot.get("endTime", "11:00")
+            day = slot.get("day", "Monday")
+            
+            # Create datetime for this week's session
+            days_map = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, "Friday": 4, "Saturday": 5, "Sunday": 6}
+            today = now.date()
+            days_ahead = days_map.get(day, 0) - today.weekday()
+            if days_ahead < 0:
+                days_ahead += 7
+            session_date = today + timedelta(days=days_ahead)
+            
+            start_h, start_m = map(int, start_time.split(":"))
+            end_h, end_m = map(int, end_time.split(":"))
+            
+            start_dt = datetime.combine(session_date, datetime.min.time().replace(hour=start_h, minute=start_m))
+            end_dt = datetime.combine(session_date, datetime.min.time().replace(hour=end_h, minute=end_m))
+            
+            # Determine status
+            if now < start_dt:
+                status = "upcoming"
+            elif start_dt <= now <= end_dt:
+                status = "active"
+            else:
+                status = "past"
+            
+            tutor_sessions.append({
+                "id": session_id,
+                "tutorId": session.get("tutorId"),
+                "tutorName": session.get("tutorName"),
+                "courseCode": session.get("courseCode"),
+                "courseTitle": session.get("courseTitle"),
+                "capacity": session.get("capacity", 1),
+                "enrolled": session.get("enrolled", 0),
+                "status": status,
+                "mode": slot.get("mode", "online"),
+                "location": slot.get("location") or ("Google Meet" if slot.get("mode") == "online" else "TBD"),
+                "day": day,
+                "startTime": start_dt.isoformat() + "Z",
+                "endTime": end_dt.isoformat() + "Z",
+                "notes": session.get("notes", ""),
+                "createdAt": session.get("createdAt"),
+            })
+    
+    # Sort by startTime
+    tutor_sessions.sort(key=lambda x: x.get("startTime", ""), reverse=True)
+    
+    return {"ok": True, "sessions": tutor_sessions}
+
+
+@app.get("/tutor/sessions/{session_id}/participants")
+async def get_session_participants(session_id: str, request: Request):
+    """GET /sessions/tutor/sessions/{id}/participants - Get participants for a session"""
+    payload = require_tutor(request)
+    tutor_id = payload.get("sub")
+    print(f"[sessions] GET /tutor/sessions/{session_id}/participants for tutor_id={tutor_id}")
+    
+    session = SESSIONS.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session not found")
+    
+    if session.get("tutorId") != tutor_id:
+        raise HTTPException(status_code=403, detail="access denied")
+    
+    # Get participants from session's participant list or return empty
+    participants = session.get("participants", [])
+    
+    return {"ok": True, "participants": participants}
+
+
+@app.post("/tutor/sessions/{session_id}/attendance")
+async def mark_attendance(session_id: str, request: Request):
+    """POST /sessions/tutor/sessions/{id}/attendance - Mark attendance for participants"""
+    payload = require_tutor(request)
+    tutor_id = payload.get("sub")
+    body = await request.json()
+    attendance = body.get("attendance", [])
+    
+    print(f"[sessions] POST /tutor/sessions/{session_id}/attendance for tutor_id={tutor_id}")
+    
+    session = SESSIONS.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session not found")
+    
+    if session.get("tutorId") != tutor_id:
+        raise HTTPException(status_code=403, detail="access denied")
+    
+    # Update participant statuses
+    participants = session.get("participants", [])
+    for record in attendance:
+        student_id = record.get("studentId")
+        status = record.get("status", "absent")
+        for p in participants:
+            if p.get("id") == student_id:
+                p["status"] = status
+                break
+    
+    session["participants"] = participants
+    
+    return {"ok": True, "message": "Attendance saved"}
+
+
+@app.post("/tutor/sessions/{session_id}/extend")
+async def extend_session(session_id: str, request: Request):
+    """POST /sessions/tutor/sessions/{id}/extend - Extend session duration"""
+    payload = require_tutor(request)
+    tutor_id = payload.get("sub")
+    body = await request.json()
+    minutes = body.get("minutes", 15)
+    
+    print(f"[sessions] POST /tutor/sessions/{session_id}/extend by {minutes} minutes for tutor_id={tutor_id}")
+    
+    session = SESSIONS.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session not found")
+    
+    if session.get("tutorId") != tutor_id:
+        raise HTTPException(status_code=403, detail="access denied")
+    
+    # Update end time in slots
+    slots = session.get("slots", [])
+    for slot in slots:
+        if slot.get("endTime"):
+            end_h, end_m = map(int, slot["endTime"].split(":"))
+            total_minutes = end_h * 60 + end_m + minutes
+            new_h = total_minutes // 60
+            new_m = total_minutes % 60
+            slot["endTime"] = f"{new_h:02d}:{new_m:02d}"
+    
+    return {"ok": True, "message": f"Session extended by {minutes} minutes"}
+
+
+@app.post("/tutor/sessions/{session_id}/change-mode")
+async def change_session_mode(session_id: str, request: Request):
+    """POST /sessions/tutor/sessions/{id}/change-mode - Change session mode"""
+    payload = require_tutor(request)
+    tutor_id = payload.get("sub")
+    body = await request.json()
+    new_mode = body.get("mode", "online")
+    new_location = body.get("location", "")
+    
+    print(f"[sessions] POST /tutor/sessions/{session_id}/change-mode to {new_mode} for tutor_id={tutor_id}")
+    
+    session = SESSIONS.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session not found")
+    
+    if session.get("tutorId") != tutor_id:
+        raise HTTPException(status_code=403, detail="access denied")
+    
+    # Update mode in slots
+    slots = session.get("slots", [])
+    for slot in slots:
+        slot["mode"] = new_mode
+        slot["location"] = new_location if new_mode == "offline" else None
+    
+    return {"ok": True, "message": f"Session mode changed to {new_mode}"}
+
+
+@app.post("/tutor/sessions/{session_id}/notes")
+async def save_session_notes(session_id: str, request: Request):
+    """POST /sessions/tutor/sessions/{id}/notes - Save session notes"""
+    payload = require_tutor(request)
+    tutor_id = payload.get("sub")
+    body = await request.json()
+    notes = body.get("notes", "")
+    
+    print(f"[sessions] POST /tutor/sessions/{session_id}/notes for tutor_id={tutor_id}")
+    
+    session = SESSIONS.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session not found")
+    
+    if session.get("tutorId") != tutor_id:
+        raise HTTPException(status_code=403, detail="access denied")
+    
+    session["notes"] = notes
+    
+    return {"ok": True, "message": "Notes saved"}
+
+
+@app.put("/{session_id}/status")
+async def update_session_status(session_id: str, request: Request):
+    """PUT /sessions/{id}/status - Update session status (end session)"""
+    payload = require_tutor(request)
+    tutor_id = payload.get("sub")
+    body = await request.json()
+    new_status = body.get("status", "past")
+    
+    print(f"[sessions] PUT /{session_id}/status to {new_status} for tutor_id={tutor_id}")
+    
+    session = SESSIONS.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session not found")
+    
+    if session.get("tutorId") != tutor_id:
+        raise HTTPException(status_code=403, detail="access denied")
+    
+    session["status"] = new_status
+    if new_status == "past":
+        session["endedAt"] = datetime.utcnow().isoformat() + "Z"
+    
+    return {"ok": True, "message": f"Session status updated to {new_status}"}
 
 
 # ==================== SESSION DETAIL (MUST BE LAST) ====================

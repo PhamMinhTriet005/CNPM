@@ -7,6 +7,16 @@
     <title>BKTutor | Sessions</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="stylesheet" href="/static/css/tutor_manage_session.css">
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+        }
+    </style>
 </head>
 
 <body>
@@ -17,9 +27,9 @@
                 <span>BKTutor</span>
             </a>
             <nav class="nav-links">
-                <a href="/html/tutor_profile.html">Profile</a>
-                <a href="/html/tutor_management_page.html" class="active">Manage</a>
-                <a href="/html/tutor_manage_session.html">Sessions</a>
+                <a href="/tutor_profile.html">Profile</a>
+                <a href="/tutor_management_page.html">Manage</a>
+                <a href="/tutor_manage_session.html" class="active">Sessions</a>
             </nav>
             <div class="spacer"></div>
             <button id="logoutBtn" class="btn primary" type="button">Log out</button>

@@ -40,22 +40,21 @@ const state = {
 // ==================== DOM ELEMENTS ====================
 const els = {
   logout: document.querySelector("#logoutBtn"),
-  searchInput: document.querySelector("#search-input"),
-  // Try multiple selectors for course list
-  coursesList: document.querySelector(".sessions-scroll") || document.querySelector("#courses-list"),
-  coursesEmpty: document.querySelector(".sessions-empty"),
-  coursesCount: document.querySelector(".sessions-count"),
-  dayChips: document.querySelector(".chip-group") || document.querySelector("#day-chips"),
+  searchInput: document.querySelector("#filter-code"), // Fixed: was #search-input
+  coursesList: document.querySelector("#courses-list") || document.querySelector(".course-list"),
+  coursesEmpty: document.querySelector("#courses-empty"),
+  coursesCount: document.querySelector("#courses-count"), // Fixed selector
+  dayChips: document.querySelector("#day-chips") || document.querySelector(".chip-group"),
   modeOnline: document.querySelector("#mode-online"),
   modeCampus: document.querySelector("#mode-campus"),
   hourSlider: document.querySelector("#hour-slider"),
-  hourLabel: document.querySelector("#hour-label"),
+  hourLabel: document.querySelector("#range-label"), // Fixed: was #hour-label
   resetFilters: document.querySelector("#reset-filters"),
-  pageInfo: document.querySelector(".page-info"),
+  pageInfo: document.querySelector("#page-info") || document.querySelector(".page-info"),
   prevPage: document.querySelector("#prev-page"),
   nextPage: document.querySelector("#next-page"),
-  regList: document.querySelector(".reg-list") || document.querySelector("#course-registration"),
-  // Profile elements - UPDATED
+  regList: document.querySelector("#course-registration") || document.querySelector(".reg-list"),
+  // Profile elements
   profileAvatar: document.querySelector("#msg-avatar"),
   profileName: document.querySelector("#msg-name"),
   profileId: document.querySelector("#msg-id"),
