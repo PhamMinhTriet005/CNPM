@@ -192,8 +192,8 @@ AVAILABILITY: Dict[str, Dict[str, Any]] = {
                 "recurrence": "weekly",
                 "status": "unpublished",
                 "booked": False,
-                "courseCode": None,
-                "courseTitle": None,
+                "courseCode": "CO1234",
+                "courseTitle": "Introduction to Programming",
             },
         ],
         "exceptions": [],
@@ -393,23 +393,23 @@ async def publish_slot(slot_id: str, request: Request):
         "enrolled": 0,
         "status": "active",
         "createdAt": datetime.utcnow().isoformat() + "Z",
+        "date": slot.get("date"),  # Include the specific date for one-time slots
+        "recurrence": slot.get("recurrence", "once"),
         "slots": [
             {
                 "id": f"slot-{slot_id}",
                 "day": slot["day"],
+                "date": slot.get("date"),  # Include date in slot too
                 "startTime": slot["startTime"],
                 "endTime": end_time,
                 "mode": slot.get("mode", "online"),
                 "location": slot.get("location"),
             }
         ],
-        "sourceSlotId": slot_id,  # Link back to availability slot
     }
     
     SESSIONS[session_id] = new_session
-    slot["sessionId"] = session_id  # Link availability slot to session
-    
-    print(f"[sessions] Published slot {slot_id} and created session {session_id}")
+    print(f"[sessions] Created session {session_id} with date={slot.get('date')}")
     
     return {"ok": True, "slot": slot, "session": new_session}
 
@@ -445,25 +445,26 @@ async def publish_all_slots(request: Request):
                 "enrolled": 0,
                 "status": "active",
                 "createdAt": now,
+                "date": slot.get("date"),  # Include the specific date
+                "recurrence": slot.get("recurrence", "once"),
                 "slots": [
                     {
                         "id": f"slot-{slot['id']}",
                         "day": slot["day"],
+                        "date": slot.get("date"),  # Include date in slot
                         "startTime": slot["startTime"],
                         "endTime": end_time,
                         "mode": slot.get("mode", "online"),
                         "location": slot.get("location"),
                     }
                 ],
-                "sourceSlotId": slot["id"],
             }
             
             SESSIONS[session_id] = new_session
-            slot["sessionId"] = session_id
             count += 1
-            print(f"[sessions] Published slot {slot['id']} and created session {session_id}")
+            print(f"[sessions] Created session {session_id} with date={slot.get('date')}")
     
-    return {"ok": True, "count": count}
+    return {"ok": True, "published": count}
 
 
 @app.delete("/availability/bulk-delete-unpublished")
@@ -534,14 +535,20 @@ async def browse_sessions(request: Request):
     """GET /sessions/browse - Students browse all active sessions"""
     _ = require_auth(request)
     
-    active_sessions = [
-        {
-            **s,
-            "availableSlots": s["capacity"] - s["enrolled"],
-        }
-        for s in SESSIONS.values()
-        if s["status"] == "active"
-    ]
+    active_sessions = []
+    for s in SESSIONS.values():
+        if s["status"] == "active":
+            session_data = {
+                **s,
+                "availableSlots": s["capacity"] - s["enrolled"],
+            }
+            # Include date from slot if available
+            if s.get("date"):
+                session_data["date"] = s["date"]
+            elif s.get("slots") and s["slots"][0].get("date"):
+                session_data["date"] = s["slots"][0]["date"]
+            
+            active_sessions.append(session_data)
     
     # Sort by createdAt descending
     active_sessions.sort(key=lambda x: x.get("createdAt", ""), reverse=True)
@@ -778,7 +785,7 @@ async def mark_attendance(session_id: str, request: Request):
 
 @app.post("/tutor/sessions/{session_id}/extend")
 async def extend_session(session_id: str, request: Request):
-    """POST /sessions/tutor/sessions/{id}/extend - Extend session duration"""
+    """POST /tutor/sessions/{id}/extend - Extend session duration"""
     payload = require_tutor(request)
     tutor_id = payload.get("sub")
     body = await request.json()

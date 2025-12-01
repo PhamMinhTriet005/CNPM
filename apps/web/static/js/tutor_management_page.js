@@ -79,10 +79,20 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     stopBookingPolling();
   } else {
-    fetchBookingRequests(); // Immediate fetch when tab visible
+    fetchBookingRequests();
     startBookingPolling();
   }
 });
+
+// Helpers
+function getWeekStart(date) {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  d.setDate(diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
 
 // DOM Elements
 const els = {
@@ -110,16 +120,6 @@ const els = {
   tabs: document.querySelectorAll(".tab"),
   tabContents: document.querySelectorAll(".tab-content"),
 };
-
-// Helpers
-function getWeekStart(date) {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
 
 function formatWeekDisplay(startDate) {
   const endDate = new Date(startDate);
@@ -157,7 +157,6 @@ function formatTime(time, duration) {
 async function fetchAvailability() {
   console.log("Fetching availability from Sessions service...");
   try {
-    // Changed from /tutors/availability to /sessions/availability
     const res = await fetch(api("/sessions/availability"), { credentials: "include" });
     
     if (res.status === 401 || res.status === 403) {
@@ -166,19 +165,20 @@ async function fetchAvailability() {
     }
     
     if (!res.ok) {
-      console.error("Failed to load availability:", res.status);
+      console.error("Failed to fetch availability:", res.status);
       showAlert("Failed to load availability", "error");
       return;
     }
     
     const data = await res.json();
+    console.log("Availability data:", data);
+    
     availabilityData = {
       slots: data.slots || [],
       exceptions: data.exceptions || [],
       policy: data.policy || {},
-      weekUsage: data.weekUsage || 0,
+      weekUsage: data.slots?.length || 0,
     };
-    console.log("Availability data:", availabilityData);
     
     renderCalendar();
     renderSlotsTable();
@@ -190,220 +190,7 @@ async function fetchAvailability() {
   }
 }
 
-async function addSlot(slotData) {
-  try {
-    // Changed from /tutors/availability/slots to /sessions/availability/slots
-    const res = await fetch(api("/sessions/availability/slots"), {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(slotData),
-    });
-    
-    if (!res.ok) {
-      const data = await res.json();
-      showAlert(data.detail || "Failed to add slot", "error");
-      return false;
-    }
-    
-    showAlert("Slot added successfully!");
-    await fetchAvailability();
-    return true;
-  } catch (err) {
-    console.error("Add slot error:", err);
-    showAlert("Failed to add slot", "error");
-    return false;
-  }
-}
-
-async function updateSlot(slotId, slotData) {
-  try {
-    const res = await fetch(api(`/sessions/availability/slots/${slotId}`), {
-      method: "PUT",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(slotData),
-    });
-    
-    if (!res.ok) {
-      showAlert("Failed to update slot", "error");
-      return false;
-    }
-    
-    showAlert("Slot updated successfully!");
-    await fetchAvailability();
-    return true;
-  } catch (err) {
-    console.error("Update slot error:", err);
-    showAlert("Failed to update slot", "error");
-    return false;
-  }
-}
-
-window.deleteSlot = async function(slotId) {
-  if (!confirm("Are you sure you want to delete this slot?")) return;
-  
-  try {
-    const res = await fetch(api(`/sessions/availability/slots/${slotId}`), {
-      method: "DELETE",
-      credentials: "include",
-    });
-    
-    if (!res.ok) {
-      const data = await res.json();
-      showAlert(data.detail || "Failed to delete slot", "error");
-      return;
-    }
-    
-    showAlert("Slot deleted!");
-    await fetchAvailability();
-  } catch (err) {
-    console.error("Delete slot error:", err);
-    showAlert("Failed to delete slot", "error");
-  }
-};
-
-window.publishSlot = async function(slotId) {
-  try {
-    const res = await fetch(api(`/sessions/availability/slots/${slotId}/publish`), {
-      method: "POST",
-      credentials: "include",
-    });
-    
-    if (!res.ok) {
-      showAlert("Failed to publish slot", "error");
-      return;
-    }
-    
-    showAlert("Slot published!");
-    await fetchAvailability();
-  } catch (err) {
-    console.error("Publish slot error:", err);
-    showAlert("Failed to publish slot", "error");
-  }
-};
-
-window.editSlot = function(slotId) {
-  const slot = availabilityData.slots.find((s) => s.id === slotId);
-  if (!slot) return;
-  
-  editingSlotId = slotId;
-  
-  // Populate form
-  const setVal = (id, val) => {
-    const el = document.getElementById(id);
-    if (el) el.value = val || "";
-  };
-  
-  setVal("recurrence", slot.recurrence || "once");
-  setVal("slotDay", slot.day);
-  setVal("slotDate", slot.date);
-  setVal("startTime", slot.startTime);
-  setVal("duration", slot.duration || 60);
-  setVal("mode", slot.mode || "online");
-  setVal("capacity", slot.capacity || 1);
-  setVal("location", slot.location);
-  setVal("leadTime", slot.leadTime || 24);
-  setVal("cancelWindow", slot.cancelWindow || 12);
-  
-  // Update modal title
-  const header = document.querySelector("#slotModal .modal-header");
-  if (header) header.textContent = "Edit Availability Slot";
-  
-  if (els.slotModal) els.slotModal.classList.add("active");
-};
-
-async function publishAllSlots() {
-  try {
-    const res = await fetch(api("/sessions/availability/publish-all"), {
-      method: "POST",
-      credentials: "include",
-    });
-    
-    if (!res.ok) {
-      showAlert("Failed to publish slots", "error");
-      return;
-    }
-    
-    const data = await res.json();
-    showAlert(`Published ${data.count} slot(s)!`);
-    await fetchAvailability();
-  } catch (err) {
-    console.error("Publish all error:", err);
-    showAlert("Failed to publish slots", "error");
-  }
-}
-
-async function bulkDeleteUnpublished() {
-  if (!confirm("Are you sure you want to delete all unpublished slots?")) return;
-  
-  try {
-    const res = await fetch(api("/sessions/availability/bulk-delete-unpublished"), {
-      method: "DELETE",
-      credentials: "include",
-    });
-    
-    if (!res.ok) {
-      showAlert("Failed to delete slots", "error");
-      return;
-    }
-    
-    const data = await res.json();
-    showAlert(`Deleted ${data.deletedCount} slot(s)`);
-    await fetchAvailability();
-  } catch (err) {
-    console.error("Bulk delete error:", err);
-    showAlert("Failed to delete slots", "error");
-  }
-}
-
-async function addException(excData) {
-  try {
-    const res = await fetch(api("/sessions/availability/exceptions"), {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(excData),
-    });
-    
-    if (!res.ok) {
-      showAlert("Failed to add exception", "error");
-      return false;
-    }
-    
-    showAlert("Exception added!");
-    await fetchAvailability();
-    return true;
-  } catch (err) {
-    console.error("Add exception error:", err);
-    showAlert("Failed to add exception", "error");
-    return false;
-  }
-}
-
-window.deleteException = async function(excId) {
-  if (!confirm("Delete this exception?")) return;
-  
-  try {
-    const res = await fetch(api(`/sessions/availability/exceptions/${excId}`), {
-      method: "DELETE",
-      credentials: "include",
-    });
-    
-    if (!res.ok) {
-      showAlert("Failed to delete exception", "error");
-      return;
-    }
-    
-    showAlert("Exception deleted!");
-    await fetchAvailability();
-  } catch (err) {
-    console.error("Delete exception error:", err);
-    showAlert("Failed to delete exception", "error");
-  }
-};
-
-// ==================== BOOKING REQUESTS (from Tutors service) ====================
+// ==================== BOOKING REQUESTS ====================
 
 async function fetchBookingRequests(silent = false) {
   try {
@@ -433,72 +220,373 @@ async function fetchBookingRequests(silent = false) {
   }
 }
 
-async function confirmBooking(bookingId) {
+// ==================== SLOT CRUD ====================
+
+async function addSlot(slotData) {
+  try {
+    const res = await fetch(api("/sessions/availability/slots"), {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(slotData),
+    });
+    
+    if (!res.ok) {
+      const error = await res.json();
+      showAlert(error.detail || "Failed to add slot", "error");
+      return false;
+    }
+    
+    showAlert("Slot added successfully!", "success");
+    await fetchAvailability();
+    return true;
+  } catch (err) {
+    console.error("Add slot error:", err);
+    showAlert("Failed to add slot", "error");
+    return false;
+  }
+}
+
+async function updateSlot(slotId, slotData) {
+  try {
+    const res = await fetch(api(`/sessions/availability/slots/${slotId}`), {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(slotData),
+    });
+    
+    if (!res.ok) {
+      const error = await res.json();
+      showAlert(error.detail || "Failed to update slot", "error");
+      return false;
+    }
+    
+    showAlert("Slot updated successfully!", "success");
+    await fetchAvailability();
+    return true;
+  } catch (err) {
+    console.error("Update slot error:", err);
+    showAlert("Failed to update slot", "error");
+    return false;
+  }
+}
+
+window.deleteSlot = async function(slotId) {
+  if (!confirm("Are you sure you want to delete this slot?")) return;
+  
+  try {
+    const res = await fetch(api(`/sessions/availability/slots/${slotId}`), {
+      method: "DELETE",
+      credentials: "include",
+    });
+    
+    if (!res.ok) {
+      showAlert("Failed to delete slot", "error");
+      return;
+    }
+    
+    showAlert("Slot deleted!", "success");
+    await fetchAvailability();
+  } catch (err) {
+    console.error("Delete slot error:", err);
+    showAlert("Failed to delete slot", "error");
+  }
+};
+
+window.publishSlot = async function(slotId) {
+  try {
+    const res = await fetch(api(`/sessions/availability/slots/${slotId}/publish`), {
+      method: "POST",
+      credentials: "include",
+    });
+    
+    if (!res.ok) {
+      showAlert("Failed to publish slot", "error");
+      return;
+    }
+    
+    showAlert("Slot published!", "success");
+    await fetchAvailability();
+  } catch (err) {
+    console.error("Publish slot error:", err);
+    showAlert("Failed to publish slot", "error");
+  }
+};
+
+// ==================== PUBLISH ALL SLOTS ====================
+
+async function publishAllSlots() {
+  try {
+    const res = await fetch(api("/sessions/availability/publish-all"), {
+      method: "POST",
+      credentials: "include",
+    });
+    
+    if (!res.ok) {
+      showAlert("Failed to publish all slots", "error");
+      return;
+    }
+    
+    const data = await res.json();
+    showAlert(`Published ${data.published || 0} slots!`, "success");
+    await fetchAvailability();
+  } catch (err) {
+    console.error("Publish all error:", err);
+    showAlert("Failed to publish all slots", "error");
+  }
+}
+
+// ==================== BULK DELETE UNPUBLISHED ====================
+
+async function bulkDeleteUnpublished() {
+  if (!confirm("Are you sure you want to delete all unpublished slots?")) return;
+  
+  try {
+    const res = await fetch(api("/sessions/availability/bulk-delete-unpublished"), {
+      method: "DELETE",
+      credentials: "include",
+    });
+    
+    if (!res.ok) {
+      showAlert("Failed to delete unpublished slots", "error");
+      return;
+    }
+    
+    const data = await res.json();
+    showAlert(`Deleted ${data.deleted || 0} slots!`, "success");
+    await fetchAvailability();
+  } catch (err) {
+    console.error("Bulk delete error:", err);
+    showAlert("Failed to delete unpublished slots", "error");
+  }
+}
+
+// ==================== EXCEPTIONS ====================
+
+async function addException(excData) {
+  try {
+    const res = await fetch(api("/sessions/availability/exceptions"), {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(excData),
+    });
+    
+    if (!res.ok) {
+      showAlert("Failed to add exception", "error");
+      return false;
+    }
+    
+    showAlert("Exception added!", "success");
+    await fetchAvailability();
+    return true;
+  } catch (err) {
+    console.error("Add exception error:", err);
+    showAlert("Failed to add exception", "error");
+    return false;
+  }
+}
+
+window.deleteException = async function(excId) {
+  if (!confirm("Are you sure you want to delete this exception?")) return;
+  
+  try {
+    const res = await fetch(api(`/sessions/availability/exceptions/${excId}`), {
+      method: "DELETE",
+      credentials: "include",
+    });
+    
+    if (!res.ok) {
+      showAlert("Failed to delete exception", "error");
+      return;
+    }
+    
+    showAlert("Exception deleted!", "success");
+    await fetchAvailability();
+  } catch (err) {
+    console.error("Delete exception error:", err);
+    showAlert("Failed to delete exception", "error");
+  }
+};
+
+// ==================== BOOKING ACTIONS ====================
+
+window.confirmBooking = async function(bookingId) {
   try {
     const res = await fetch(api(`/tutors/tutor/bookings/${bookingId}/confirm`), {
       method: "POST",
       credentials: "include",
     });
-
+    
     if (!res.ok) {
-      const data = await res.json();
-      showAlert(data.detail || "Failed to confirm booking", "error");
+      showAlert("Failed to confirm booking", "error");
       return;
     }
-
-    showAlert("Booking confirmed!");
+    
+    showAlert("Booking confirmed!", "success");
     await fetchBookingRequests();
   } catch (err) {
     console.error("Confirm booking error:", err);
     showAlert("Failed to confirm booking", "error");
   }
-}
+};
 
-async function rejectBooking(bookingId) {
+window.rejectBooking = async function(bookingId) {
   if (!confirm("Are you sure you want to reject this booking?")) return;
-
+  
   try {
     const res = await fetch(api(`/tutors/tutor/bookings/${bookingId}/reject`), {
       method: "POST",
       credentials: "include",
     });
-
+    
     if (!res.ok) {
       showAlert("Failed to reject booking", "error");
       return;
     }
-
-    showAlert("Booking rejected");
+    
+    showAlert("Booking rejected", "warning");
     await fetchBookingRequests();
   } catch (err) {
     console.error("Reject booking error:", err);
     showAlert("Failed to reject booking", "error");
   }
-}
+};
 
-async function completeBooking(bookingId) {
+window.completeBooking = async function(bookingId) {
   try {
     const res = await fetch(api(`/tutors/tutor/bookings/${bookingId}/complete`), {
       method: "POST",
       credentials: "include",
     });
-
+    
     if (!res.ok) {
       showAlert("Failed to complete booking", "error");
       return;
     }
-
-    showAlert("Session marked as completed!");
+    
+    showAlert("Booking marked as complete!", "success");
     await fetchBookingRequests();
   } catch (err) {
     console.error("Complete booking error:", err);
     showAlert("Failed to complete booking", "error");
   }
+};
+
+// ==================== RECURRENCE TYPE HANDLING ====================
+
+function setupRecurrenceHandling() {
+  const recurrenceSelect = document.getElementById("recurrence");
+  const slotDaySelect = document.getElementById("slotDay");
+  const slotDateInput = document.getElementById("slotDate");
+  const dayGroup = document.getElementById("dayGroup");
+  const dateGroup = document.getElementById("dateGroup");
+  const dayRequired = document.getElementById("dayRequired");
+  const dateRequired = document.getElementById("dateRequired");
+  const dayHint = document.getElementById("dayHint");
+  const dateHint = document.getElementById("dateHint");
+
+  if (!recurrenceSelect || !slotDaySelect || !slotDateInput) return;
+
+  recurrenceSelect.addEventListener("change", updateRecurrenceUI);
+  
+  // Auto-fill day from date for one-time slots
+  slotDateInput.addEventListener("change", () => {
+    const recurrence = recurrenceSelect.value;
+    if (recurrence === "once" && slotDateInput.value) {
+      const selectedDate = new Date(slotDateInput.value);
+      const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      slotDaySelect.value = dayNames[selectedDate.getDay()];
+    }
+  });
+
+  // Initial setup
+  updateRecurrenceUI();
+
+  function updateRecurrenceUI() {
+    const recurrence = recurrenceSelect.value;
+    
+    if (recurrence === "once") {
+      // ONE-TIME: Date is required, Day is auto-filled and disabled
+      slotDaySelect.disabled = true;
+      slotDaySelect.required = false;
+      slotDateInput.disabled = false;
+      slotDateInput.required = true;
+      
+      if (dayGroup) dayGroup.classList.add("disabled");
+      if (dateGroup) dateGroup.classList.remove("disabled");
+      if (dayRequired) dayRequired.style.display = "none";
+      if (dateRequired) dateRequired.style.display = "inline";
+      if (dayHint) dayHint.style.display = "block";
+      if (dateHint) {
+        dateHint.style.display = "block";
+        dateHint.textContent = "Required for one-time slots";
+      }
+      
+      // Auto-fill day if date is already set
+      if (slotDateInput.value) {
+        const selectedDate = new Date(slotDateInput.value);
+        const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        slotDaySelect.value = dayNames[selectedDate.getDay()];
+      }
+    } else {
+      // WEEKLY: Day is required, Date is disabled
+      slotDaySelect.disabled = false;
+      slotDaySelect.required = true;
+      slotDateInput.disabled = true;
+      slotDateInput.required = false;
+      slotDateInput.value = ""; // Clear date when switching to weekly
+      
+      if (dayGroup) dayGroup.classList.remove("disabled");
+      if (dateGroup) dateGroup.classList.add("disabled");
+      if (dayRequired) dayRequired.style.display = "inline";
+      if (dateRequired) dateRequired.style.display = "none";
+      if (dayHint) dayHint.style.display = "none";
+      if (dateHint) {
+        dateHint.style.display = "block";
+        dateHint.textContent = "Not needed for weekly slots";
+      }
+    }
+  }
 }
 
-window.confirmBooking = confirmBooking;
-window.rejectBooking = rejectBooking;
-window.completeBooking = completeBooking;
+// ==================== EDIT SLOT ====================
+
+window.editSlot = function(slotId) {
+  const slot = availabilityData.slots.find((s) => s.id === slotId);
+  if (!slot) return;
+  
+  editingSlotId = slotId;
+  
+  const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val || "";
+  };
+  
+  setVal("courseCode", slot.courseCode);
+  setVal("courseTitle", slot.courseTitle);
+  setVal("recurrence", slot.recurrence || "once");
+  setVal("slotDay", slot.day);
+  setVal("slotDate", slot.date);
+  setVal("startTime", slot.startTime);
+  setVal("duration", slot.duration || 60);
+  setVal("mode", slot.mode || "online");
+  setVal("capacity", slot.capacity || 1);
+  setVal("location", slot.location);
+  setVal("leadTime", slot.leadTime || 24);
+  setVal("cancelWindow", slot.cancelWindow || 12);
+  
+  const recurrenceSelect = document.getElementById("recurrence");
+  if (recurrenceSelect) {
+    recurrenceSelect.dispatchEvent(new Event("change"));
+  }
+  
+  const header = document.querySelector("#slotModal .modal-header");
+  if (header) header.textContent = "Edit Availability Slot";
+  
+  if (els.slotModal) els.slotModal.classList.add("active");
+};
 
 // ==================== RENDERING ====================
 
@@ -515,61 +603,64 @@ function renderCalendar() {
   days.forEach((day, i) => {
     const date = new Date(currentWeekStart);
     date.setDate(date.getDate() + i);
-    headerHtml += `<th>${day}<br><span style="font-weight:400;font-size:12px;">${formatDateShort(date)}</span></th>`;
+    headerHtml += `<th>${day}<br><span style="font-size:11px;color:#64748b;">${formatDateShort(date)}</span></th>`;
   });
   headerHtml += '</tr>';
 
+  // Build a map of slots by day
+  const slotsByDay = {};
+  days.forEach(day => {
+    slotsByDay[day] = availabilityData.slots.filter(s => s.day === day);
+  });
+
+  console.log("[tutor] All slots:", availabilityData.slots);
+  console.log("[tutor] Slots by day:", slotsByDay);
+
   let bodyHtml = '';
   hours.forEach((hour) => {
-    bodyHtml += '<tr>';
-    bodyHtml += `<td class="time-cell">${hour}</td>`;
+    const hourNum = parseInt(hour.split(":")[0]);
+    bodyHtml += `<tr><td class="time-cell">${hour}</td>`;
     
     days.forEach((day) => {
-      const slotsInCell = availabilityData.slots.filter((s) => {
-        if (s.day !== day) return false;
-        const slotHour = parseInt(s.startTime.split(":")[0], 10);
-        const cellHour = parseInt(hour.split(":")[0], 10);
-        return slotHour === cellHour;
-      });
-
-      let cellClass = "day-cell";
-      let cellContent = "";
-
-      if (slotsInCell.length > 0) {
-        cellClass += " has-slots";
-        slotsInCell.forEach((slot) => {
-          let slotClass = "slot";
-          let slotText = `${slot.startTime}<br>${slot.duration}min · ${slot.mode}<br>${slot.capacity} student${slot.capacity > 1 ? 's' : ''}`;
-          
-          if (slot.booked) {
-            slotClass += " booked";
-            slotText = `${slot.startTime}<br>Booked`;
-          } else if (slot.status === "unpublished") {
-            slotText = `${slot.startTime}<br>Draft`;
-          }
-          
-          const heightPercent = Math.min((slot.duration / 60) * 100, 200);
-          
-          cellContent += `<div class="${slotClass}" style="height:${heightPercent}%" onclick="editSlot('${slot.id}')">${slotText}</div>`;
-        });
-      }
-
-      const cellDate = new Date(currentWeekStart);
-      cellDate.setDate(cellDate.getDate() + days.indexOf(day));
-      const dateStr = cellDate.toISOString().split('T')[0];
-      
-      const hasException = availabilityData.exceptions.some((exc) => {
-        return exc.startDate <= dateStr && exc.endDate >= dateStr;
+      // Find slots that START at this hour
+      const slotsStartingHere = slotsByDay[day].filter(slot => {
+        if (!slot.startTime) return false;
+        const slotHour = parseInt(slot.startTime.split(":")[0]);
+        return slotHour === hourNum;
       });
       
-      if (hasException) {
-        cellClass += " has-exception";
-        cellContent = `<div class="slot exception">Unavailable</div>`;
-      }
-
-      bodyHtml += `<td class="${cellClass}">${cellContent}</td>`;
+      let cellContent = '';
+      slotsStartingHere.forEach(slot => {
+        const duration = slot.duration || 60;
+        const heightRows = Math.ceil(duration / 60);
+        const heightPx = heightRows * 80 - 8;
+        
+        // Determine status class - ONLY booked slots have different color
+        let statusClass = '';
+        if (slot.booked) {
+          statusClass = 'booked'; // Blue for booked
+        }
+        // All other slots (published and unpublished) are green (default)
+        
+        const courseLabel = slot.courseCode || 'Slot';
+        // Show "Draft" label ONLY for unpublished slots
+        const statusLabel = slot.status === 'unpublished' ? 'Draft' : '';
+        
+        cellContent += `
+          <div class="slot ${statusClass}" 
+               onclick="editSlot('${slot.id}')"
+               style="height: ${heightPx}px; min-height: ${heightPx}px;">
+            <div class="slot-time">${slot.startTime}</div>
+            <div class="slot-course">${courseLabel}</div>
+            <div class="slot-details">${slot.mode} • ${slot.capacity} student(s)</div>
+            ${statusLabel ? `<div class="slot-status">${statusLabel}</div>` : ''}
+          </div>
+        `;
+      });
+      
+      const hasSlots = slotsStartingHere.length > 0;
+      bodyHtml += `<td class="day-cell ${hasSlots ? 'has-slots' : ''}">${cellContent}</td>`;
     });
-    
     bodyHtml += '</tr>';
   });
 
@@ -584,28 +675,37 @@ function renderCalendar() {
 }
 
 function renderSlotsTable() {
-  if (!els.slotsTableBody) return;
+  const container = els.slotsTableBody || document.querySelector("#slotsTable tbody");
+  if (!container) return;
 
-  if (!availabilityData.slots.length) {
-    els.slotsTableBody.innerHTML = `
+  if (!availabilityData.slots || availabilityData.slots.length === 0) {
+    container.innerHTML = `
       <tr>
-        <td colspan="10" style="text-align: center; padding: 40px; color: #64748b;">
-          No availability slots configured. Click "+ Add Slots" to create one.
+        <td colspan="11" style="text-align: center; padding: 40px; color: #64748b;">
+          <div style="font-size: 48px; margin-bottom: 16px;">📅</div>
+          <div>No availability slots yet.</div>
+          <div style="font-size: 13px; margin-top: 8px;">Click "Add Slots" to create your first slot.</div>
         </td>
       </tr>
     `;
     return;
   }
 
-  els.slotsTableBody.innerHTML = availabilityData.slots
+  container.innerHTML = availabilityData.slots
     .map((slot) => {
       const statusClass = slot.status === "published" ? "published" : "unpublished";
       const modeClass = slot.mode === "online" ? "online" : "offline";
+      const timeDisplay = formatTime(slot.startTime, slot.duration);
       
+      const courseDisplay = slot.courseCode 
+        ? `<strong>${slot.courseCode}</strong>${slot.courseTitle ? `<br><span style="font-size:11px;color:#64748b;">${slot.courseTitle}</span>` : ''}`
+        : '<span style="color:#94a3b8;">Not set</span>';
+
       return `
-        <tr>
+        <tr data-slot-id="${slot.id}">
+          <td>${courseDisplay}</td>
           <td>${slot.day}</td>
-          <td>${formatTime(slot.startTime, slot.duration)}</td>
+          <td>${timeDisplay}</td>
           <td>${slot.duration} min</td>
           <td><span class="badge ${modeClass}">${slot.mode === "online" ? "Online" : "Offline"}</span></td>
           <td>${slot.location || "-"}</td>
@@ -630,8 +730,9 @@ function renderExceptionsTable() {
   if (!availabilityData.exceptions.length) {
     els.exceptionsTableBody.innerHTML = `
       <tr>
-        <td colspan="3" style="text-align: center; padding: 40px; color: #64748b;">
-          No exceptions configured
+        <td colspan="5" style="text-align: center; padding: 40px; color: #64748b;">
+          <div style="font-size: 48px; margin-bottom: 16px;">📭</div>
+          <div>No exceptions set.</div>
         </td>
       </tr>
     `;
@@ -639,30 +740,22 @@ function renderExceptionsTable() {
   }
 
   els.exceptionsTableBody.innerHTML = availabilityData.exceptions
-    .map((exc) => {
-      const dateRange = exc.startDate === exc.endDate 
-        ? exc.startDate 
-        : `${exc.startDate} - ${exc.endDate}`;
-      const timeRange = exc.startTime && exc.endTime 
-        ? `${exc.startTime} - ${exc.endTime}` 
-        : "All day";
-      
-      return `
-        <tr>
-          <td>${dateRange}</td>
-          <td>${timeRange}</td>
-          <td>${exc.reason || "-"}</td>
-          <td class="action-buttons">
-            <button class="btn small" style="background:#ef4444;color:white;" onclick="deleteException('${exc.id}')">Delete</button>
-          </td>
-        </tr>
-      `;
-    })
+    .map((exc) => `
+      <tr>
+        <td>${exc.startDate}</td>
+        <td>${exc.endDate}</td>
+        <td>${exc.startTime || "All day"} - ${exc.endTime || "All day"}</td>
+        <td>${exc.reason || "-"}</td>
+        <td>
+          <button class="btn small" style="background:#ef4444;color:white;" onclick="deleteException('${exc.id}')">Delete</button>
+        </td>
+      </tr>
+    `)
     .join("");
 }
 
 function renderBookingRequests() {
-  const container = els.requestsTableBody;
+  const container = els.requestsTableBody || document.querySelector("#requestsTable tbody");
   if (!container) return;
 
   if (!bookingRequests.length) {
@@ -678,7 +771,6 @@ function renderBookingRequests() {
     return;
   }
 
-  // Sort: pending first, then by date
   const sorted = [...bookingRequests].sort((a, b) => {
     if (a.status === "pending" && b.status !== "pending") return -1;
     if (a.status !== "pending" && b.status === "pending") return 1;
@@ -687,7 +779,6 @@ function renderBookingRequests() {
 
   container.innerHTML = sorted
     .map((b) => {
-      // Status badge styling
       const statusConfig = {
         pending: { class: "warning", icon: "⏳", label: "Pending" },
         confirmed: { class: "success", icon: "✅", label: "Confirmed" },
@@ -698,7 +789,6 @@ function renderBookingRequests() {
       
       const status = statusConfig[b.status] || { class: "", icon: "❓", label: b.status };
 
-      // Action buttons based on status
       let actions = '';
       if (b.status === "pending") {
         actions = `
@@ -707,21 +797,13 @@ function renderBookingRequests() {
         `;
       } else if (b.status === "confirmed") {
         actions = `
-          <button class="btn small primary" onclick="completeBooking('${b.id}')">🎓 Complete</button>
+          <button class="btn small" style="background:#22c55e;color:white;" onclick="completeBooking('${b.id}')">✓ Complete</button>
         `;
-      } else {
-        actions = `<span class="muted">-</span>`;
       }
 
-      // Check if this is a new request (less than 1 minute old)
-      const isNew = b.status === "pending" && 
-                    (Date.now() - new Date(b.createdAt).getTime()) < 60000;
-
       return `
-        <tr class="${isNew ? 'booking-new' : ''}">
-          <td>
-            <div style="font-weight: 600;">${b.studentName || 'Unknown'}</div>
-          </td>
+        <tr data-booking-id="${b.id}">
+          <td style="font-weight: 600;">${b.studentName || 'Unknown'}</td>
           <td style="font-size: 13px; color: #64748b;">${b.studentEmail || '-'}</td>
           <td>
             <code style="background: #f1f5f9; padding: 4px 8px; border-radius: 4px; font-size: 12px;">
@@ -789,33 +871,36 @@ function attachEvents() {
       
       els.tabs.forEach((t) => t.classList.remove("active"));
       tab.classList.add("active");
-
+      
       els.tabContents.forEach((content) => {
         content.classList.remove("active");
       });
-
-      const targetContent = document.querySelector(`#${tabName}Tab`);
+      
+      const targetContent = document.getElementById(`${tabName}Tab`);
       if (targetContent) {
         targetContent.classList.add("active");
-      }
-
-      if (tabName === "requests") {
-        fetchBookingRequests();
       }
     });
   });
 
+  // Setup recurrence handling
+  setupRecurrenceHandling();
+
   // Add slot button
   els.addSlotBtn?.addEventListener("click", () => {
     editingSlotId = null;
+    els.slotForm?.reset();
+    
+    const recurrenceSelect = document.getElementById("recurrence");
+    if (recurrenceSelect) {
+      recurrenceSelect.value = "once";
+      recurrenceSelect.dispatchEvent(new Event("change"));
+    }
+    
     const header = document.querySelector("#slotModal .modal-header");
     if (header) header.textContent = "Add Availability Slot";
     
-    els.slotForm?.reset();
-    
-    if (els.slotModal) {
-      els.slotModal.classList.add("active");
-    }
+    if (els.slotModal) els.slotModal.classList.add("active");
   });
 
   // Cancel slot modal
@@ -832,10 +917,48 @@ function attachEvents() {
     
     const getValue = (id) => document.getElementById(id)?.value || "";
     
+    const courseCode = getValue("courseCode").toUpperCase().trim();
+    const courseTitle = getValue("courseTitle").trim();
+    const recurrence = getValue("recurrence");
+    const slotDate = getValue("slotDate");
+    
+    // Validation
+    if (!courseCode) {
+      showAlert("Course Code is required", "error");
+      document.getElementById("courseCode")?.focus();
+      return;
+    }
+    
+    if (!courseTitle) {
+      showAlert("Course Title is required", "error");
+      document.getElementById("courseTitle")?.focus();
+      return;
+    }
+    
+    if (recurrence === "once" && !slotDate) {
+      showAlert("Date is required for one-time slots", "error");
+      document.getElementById("slotDate")?.focus();
+      return;
+    }
+    
+    let day = getValue("slotDay");
+    if (recurrence === "once" && slotDate) {
+      const selectedDate = new Date(slotDate);
+      const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      day = dayNames[selectedDate.getDay()];
+    }
+    
+    if (!day) {
+      showAlert("Day is required", "error");
+      return;
+    }
+    
     const slotData = {
-      recurrence: getValue("recurrence"),
-      day: getValue("slotDay"),
-      date: getValue("slotDate") || null,
+      courseCode: courseCode,
+      courseTitle: courseTitle,
+      recurrence: recurrence,
+      day: day,
+      date: recurrence === "once" ? slotDate : null,
       startTime: getValue("startTime"),
       duration: parseInt(getValue("duration")) || 60,
       mode: getValue("mode"),
@@ -854,6 +977,7 @@ function attachEvents() {
 
     if (success) {
       els.slotModal?.classList.remove("active");
+      els.slotForm?.reset();
       editingSlotId = null;
     }
   });
@@ -923,26 +1047,41 @@ function attachEvents() {
 // ==================== INITIALIZE ====================
 
 (async function init() {
-  console.log("Initializing tutor management page...");
-
+  console.log("[tutor] Initializing tutor management page...");
+  
+  // Check auth first
+  try {
+    const authRes = await fetch(api("/auth/me"), { credentials: "include" });
+    if (!authRes.ok) {
+      console.log("[tutor] Not authenticated, redirecting to login");
+      window.location.href = "/login.html";
+      return;
+    }
+    const authData = await authRes.json();
+    if (authData.user?.role !== "TUTOR") {
+      console.log("[tutor] Not a tutor, redirecting");
+      window.location.href = "/login.html";
+      return;
+    }
+  } catch (err) {
+    console.error("[tutor] Auth check failed:", err);
+    window.location.href = "/login.html";
+    return;
+  }
+  
+  attachEvents();
+  
+  // Set initial week display
   if (els.weekDisplay) {
     els.weekDisplay.textContent = formatWeekDisplay(currentWeekStart);
   }
-
-  attachEvents();
   
-  // Fetch initial data
-  await Promise.all([
-    fetchAvailability(),
-    fetchBookingRequests(),
-  ]);
+  // Fetch data
+  await fetchAvailability();
+  await fetchBookingRequests();
   
-  // Update badge on load
-  const pendingCount = bookingRequests.filter(b => b.status === "pending").length;
-  updateRequestsTabBadge(pendingCount);
-  
-  // Start auto-polling for new booking requests
+  // Start polling for booking requests
   startBookingPolling();
   
-  console.log("Tutor management page initialized with auto-polling");
+  console.log("[tutor] Ready!");
 })();

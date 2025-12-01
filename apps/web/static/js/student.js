@@ -110,14 +110,17 @@ function showNotification(message, type = "success") {
 // ==================== HELPER FUNCTIONS ====================
 
 function formatScheduleLabel(course) {
-  if (course.date) return course.date;
-  const dayMap = { MON: 1, TUE: 2, WED: 3, THU: 4, FRI: 5, SAT: 6, SUN: 0 };
-  const dayNum = dayMap[course.dayOfWeek] || 1;
-  const today = new Date();
-  const diff = (dayNum - today.getDay() + 7) % 7;
-  const nextDay = new Date(today);
-  nextDay.setDate(today.getDate() + diff + 7);
-  return nextDay.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" });
+  // If course has a specific date (one-time session), format it consistently
+  if (course.date) {
+    const date = new Date(course.date);
+    if (!isNaN(date.getTime())) {
+      // Format as MM/DD/YY to match weekly sessions
+      return date.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" });
+    }
+    return course.date;
+  }
+  
+  return "Weekly";
 }
 
 function updatePager(total) {
@@ -154,6 +157,7 @@ async function fetchSessions() {
       end: s.end || s.slots?.[0]?.endTime || "11:00",
       mode: s.mode || (s.slots?.[0]?.mode === "online" ? "Online" : "On campus"),
       date: s.date || "",
+      location: s.location || s.slots?.[0]?.location || null, // Add location
     }));
 
     console.log(`[student] Loaded ${state.courses.length} courses`);
@@ -623,7 +627,7 @@ function renderCourses() {
     } else {
       buttonHtml = `<button class="btn small ghost" data-session-id="${c.id}" onclick="addToRegistration('${c.id}')">Add to registration</button>`;
     }
-
+    const modeDisplay = c.mode === "Online" ? "Online" : (c.location ? `${c.location}` : "On campus");
     return `
       <article class="course-card">
         <div class="course-head">
@@ -634,7 +638,7 @@ function renderCourses() {
           <button class="btn tiny ghost">View profile</button>
         </div>
         <div class="course-tags">
-          <span class="badge">${c.mode}</span>
+          <span class="badge">${modeDisplay}</span>
           <span class="badge">${c.start}-${c.end}</span>
           <span class="badge">${formatScheduleLabel(c)}</span>
           <span class="badge">${c.dayOfWeek}</span>
