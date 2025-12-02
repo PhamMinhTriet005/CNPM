@@ -103,10 +103,7 @@ def calculate_end_time(start_time: str, duration: int) -> str:
 
 # ==================== IN-MEMORY DATA ====================
 
-# Tutor info for display
-TUTORS_INFO: Dict[str, Dict[str, str]] = {
-    "tut-001": {"name": "Perfect Cell", "email": "tutor@hcmut.edu.vn"},
-}
+
 
 # Sessions storage (what students browse)
 SESSIONS: Dict[str, Dict[str, Any]] = {
@@ -229,9 +226,6 @@ def ensure_availability(tutor_id: str) -> Dict[str, Any]:
         }
     return AVAILABILITY[tutor_id]
 
-
-def get_tutor_name(tutor_id: str) -> str:
-    return TUTORS_INFO.get(tutor_id, {}).get("name", "Tutor")
 
 
 # ==================== HEALTH CHECK ====================
@@ -364,7 +358,7 @@ async def publish_slot(slot_id: str, request: Request):
     """POST /sessions/availability/slots/{id}/publish - Publish a slot and create a session"""
     payload = require_tutor(request)
     tutor_id = payload.get("sub")
-    tutor_name = payload.get("name", get_tutor_name(tutor_id))
+    tutor_name = payload.get("name", "Tutor")
     print(f"[sessions] POST /availability/slots/{slot_id}/publish for tutor_id={tutor_id}")
     
     data = ensure_availability(tutor_id)
@@ -419,7 +413,7 @@ async def publish_all_slots(request: Request):
     """POST /sessions/availability/publish-all - Publish all unpublished slots"""
     payload = require_tutor(request)
     tutor_id = payload.get("sub")
-    tutor_name = payload.get("name", get_tutor_name(tutor_id))
+    tutor_name = payload.get("name", "Tutor")
     print(f"[sessions] POST /availability/publish-all for tutor_id={tutor_id}")
     
     data = ensure_availability(tutor_id)

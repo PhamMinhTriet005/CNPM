@@ -395,7 +395,7 @@ function renderSessionDetails(session) {
         const events = [
             { time: formatTime(session.startTime), text: 'Session started', color: '#16a34a' },
         ];
-
+        
         session.participants.forEach((p, i) => {
             if (p.status === 'present') {
                 const joinTime = new Date(startDate.getTime() + (i + 1) * 3 * 60000);
@@ -422,7 +422,7 @@ function renderSessionDetails(session) {
         `).join('');
     }
 
-    // Generate participants HTML with booking status
+    // Generate participants HTML
     const participantsHtml = session.participants.length > 0 
         ? session.participants.map(p => {
             const statusColor = p.status === 'present' ? '#dcfce7' : 
@@ -529,6 +529,12 @@ function renderSessionDetails(session) {
                 </div>
             </div>
 
+            <!-- Library Resources Card -->
+            <div class="content-card">
+                <div class="card-header" style="margin-bottom: 16px;">📚 Library Resources</div>
+                <div id="libraryResources"></div>
+            </div>
+
             <!-- Actions Card -->
             <div class="content-card">
                 <div class="card-header" style="margin-bottom: 16px;">⚡ Actions</div>
@@ -549,6 +555,9 @@ function renderSessionDetails(session) {
             </div>
         </div>
     `;
+    
+    // Render library resources after DOM is updated
+    renderLibraryResources(session.course);
 }
 
 function updateTabCounts() {
@@ -891,6 +900,50 @@ async function selectSession(id) {
     if (session.status === 'active') {
         startParticipantPolling();
     }
+}
+
+// ==================== MOCK LIBRARY RESOURCES ====================
+
+const MOCK_LIBRARY = {
+    "CO3005": [
+        { id: "lib-1", title: "Software Engineering: A Practitioner's Approach", url: "#" },
+        { id: "lib-2", title: "Clean Code: A Handbook of Agile Software Craftsmanship", url: "#" },
+        { id: "lib-3", title: "Design Patterns: Elements of Reusable Object-Oriented Software", url: "#" },
+    ],
+    "CO2013": [
+        { id: "lib-4", title: "Operating System Concepts", url: "#" },
+        { id: "lib-5", title: "Modern Operating Systems", url: "#" },
+    ],
+    "CO1234": [
+        { id: "lib-6", title: "Introduction to Programming Using Python", url: "#" },
+        { id: "lib-7", title: "Python Crash Course", url: "#" },
+    ],
+    "default": [
+        { id: "lib-default", title: "Course Reference Materials", url: "#" },
+    ],
+};
+
+function getLibraryForCourse(courseCode) {
+    return MOCK_LIBRARY[courseCode] || MOCK_LIBRARY["default"];
+}
+
+function renderLibraryResources(courseCode) {
+    const container = document.querySelector("#libraryResources");
+    if (!container) return;
+    
+    const books = getLibraryForCourse(courseCode);
+    
+    if (books.length === 0) {
+        container.innerHTML = '<div class="muted">No library resources available</div>';
+        return;
+    }
+    
+    container.innerHTML = books.map(book => `
+        <div class="library-item">
+            <span class="library-icon">📚</span>
+            <a href="${book.url}" class="library-link" target="_blank">${book.title}</a>
+        </div>
+    `).join('');
 }
 
 // Make functions available globally
